@@ -14,4 +14,6 @@ genderbars
 genderbars <- ggplot(titanic,aes(sex,fill = factor(survived))) + geom_bar(position = 'stack')
 genderbars
 
+tit_sub <- subset(titanic,select = c(survived,sex))
+tit_sub$survivedFactor <- factor(tit_sub$survived)
 ## Add new factor of 'Lived' (survived = 1) and 'Died' (survived = 0)
