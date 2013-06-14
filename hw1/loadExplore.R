@@ -1,7 +1,10 @@
+library(ggplot2)
+library(gridExtra)
+
 ###
 # Read in Titanic Training Set
 ###
-
+#setwd('~/Documents/GeneralAssembly/DataScience/GADS4/hw1/')
 titanic = read.csv('data/train.csv',head = TRUE)
 
 ###
@@ -28,6 +31,7 @@ gbars
 png(filename="gender.png", width=600, height=480)
 gbars
 dev.off()
+
 genderbars <- ggplot(titanic,aes(x = sex,fill = factor(survived))) + geom_bar()
 genderbars
 
@@ -51,10 +55,35 @@ n_survived$text[n_survived$survived == 1] <- 'Survived'
 gbars <- gbars + geom_text(aes(sex,freq+10,label = text),data = n_survived,position=position_dodge(width=0.9))
 gbars <- gbars + theme(legend.position = "none")
 gbars
+# That's nice, print!
+png(filename="gender_survive.png", width=600, height=480)
+gbars
+dev.off()
 
+###
+# Now let's look at age:
+###
 
+#First a summary:
+summary(titanic$age)
+# Hm, 177 NA's, that's annoying, have to do something about that... later
+titanic$survived_text[titanic$survived == 0] <- 'Died'
+titanic$survived_text[titanic$survived == 1] <- 'Survived'
+age <- ggplot(titanic,aes(x = age,fill = factor(survived_text),xmin=0))
+age <- age + geom_bar(binwidth=5,position = 'dodge',alpha = 1)
+age <- age + theme_classic(16,'Times')
+age <- age + labs(fill = ' ')
+age
 
-## Now with who survived
-genderbars <- ggplot(titanic,aes(sex,fill = factor(survived))) + geom_bar(position = 'stack')
-genderbars
+# It'd be nice to move the legend into the plot area,
+# and diplay the NA's somehow...
+# also should set xmin and ymin to zero to get rid of the dumb whitespace
+age <- age + theme(legend.position = c(0.75,0.75)) # moves the legend
 
+# Now maybe a barplot of the NA's...
+ageNA <- titanic[is.na(titanic$age),]
+NAbars <- ggplot(ageNA,aes(x=factor(age),fill=factor(survived_text)))
+NAbars <- NAbars + geom_bar(position = 'dodge')
+NAbars
+
+grid.arrange(age,NAbars)
