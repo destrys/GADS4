@@ -1,5 +1,6 @@
 library(ggplot2)
 library(gridExtra)
+library(plyr)
 
 ###
 # Read in Titanic Training Set
@@ -52,7 +53,7 @@ n_survived <- count(titanic,vars = c("survived", "sex"))
 str(n_survived)
 n_survived$text[n_survived$survived == 0] <- 'Died'
 n_survived$text[n_survived$survived == 1] <- 'Survived'
-gbars <- gbars + geom_text(aes(sex,freq+10,label = text),data = n_survived,position=position_dodge(width=0.9))
+gbars <- gbars + geom_text(aes(sex,freq+10,label = text,family="Times"),data = n_survived,position=position_dodge(width=0.9))
 gbars <- gbars + theme(legend.position = "none")
 gbars
 # That's nice, print!
@@ -70,7 +71,8 @@ summary(titanic$age)
 titanic$survived_text[titanic$survived == 0] <- 'Died'
 titanic$survived_text[titanic$survived == 1] <- 'Survived'
 age <- ggplot(titanic,aes(x = age,fill = factor(survived_text),xmin=0))
-age <- age + geom_bar(binwidth=5,position = 'dodge',alpha = 1)
+#age <- age + geom_bar(binwidth=5,position = 'dodge',alpha = 1)
+age <- age + geom_density(binwidth=5,stat = 'bin',alpha=0.5)
 age <- age + theme_classic(16,'Times')
 age <- age + labs(fill = ' ')
 age
