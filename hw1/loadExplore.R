@@ -4,7 +4,7 @@ library(gridExtra)
 ###
 # Read in Titanic Training Set
 ###
-#setwd('~/Documents/GeneralAssembly/DataScience/GADS4/hw1/')
+#setwd('~/Documents/GeneralAssembly/GADS4/hw1/')
 titanic = read.csv('data/train.csv',head = TRUE)
 
 ###
