@@ -45,3 +45,11 @@ sample()
 
 ## Class Three!
 
+## Class Four
+R text processing package - library(tm)
+library(directlabels) - labels points
+?strptime
+?lubridate
+google manyeyes - IBM datasets
+?ddply
+?melt
