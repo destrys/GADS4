@@ -4,14 +4,185 @@ Homework 2
 [Assignment Details](https://github.com/arahuja/GADS4/wiki/Regression-Assignment)
 
 ```{r initialize}
-
 setwd('~/Documents/GeneralAssembly/GADS4/hw2/')
-summary(cars)
 ```
 
-You can also embed plots, for example:
+```{r loadAndExplore}
+trainfull_10k <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train.csv')
+str(trainfull_10k)
+```
 
+Taken from [kaggle site](http://www.kaggle.com/c/job-salary-prediction/data).
+* ID - key of the row, should be unique
+* Title - Title of the job ad
+* FullDescription - body of job add. Numerics have been replaced by astericks to
+remove salary info, may have removed other numbers.
+* LocationRaw - Location of job
+* LocationNormalized - Adzuna's interpretaion of the location
+* ContractType - Full time (2978), part time(578), or blank (6444)
+* ContractTime - contract (605), permanent(4132), or blank (5263)
+* Company - employer name
+* Category - 30 standard jobs as defined by adzuna
+* SalaryRaw - text of salary from employer 
+* SalaryNormalized - value of salary - *Predict this*
+* SourceName - website where job was advertised
+
+We're prdiciting SalaryNormalized, so let's check it out a little:
 ```{r fig.width=7, fig.height=6}
-plot(cars)
+summary(trainfull_10k$SalaryNormalized)
+hist(trainfull_10k$SalaryNormalized)
+hist(log(trainfull_10k$SalaryNormalized))
+
 ```
+SalaryNormalized is pretty skewed, but log(SalaryNormalized) looks pretty
+gaussian, so let's predict that instead
+```{r log}
+trainfull_10k$LogSalary <- log(trainfull_10k$SalaryNormalized)
+```
+
+
+### Problem 1: Split the data into training and test sets.
+
+I'll do 90/10 train/validate
+
+```{r splitTrain}
+m = length(trainfull_10k[,1]) # number of rows
+validate_indx <- sample.int(m, size = floor(0.1*m))
+validate <- trainfull_10k[validate_indx,]
+train <- trainfull_10k[-validate_indx,]
+```
+
+### Problem 2: Build a simple linear regression using the available categorical variables.
+
+Before doing the regression, let's define a coupe functions to make life cleaner:
+
+```{r MAEMSE}
+
+mae <- function(values,predictions){
+  return(mean(abs(values - predictions),na.rm=T))
+}
+
+```
+
+
+Without some text parsing, title, full description, and LocationRaw are useless.
+Company has 10% the number of values as we have jobs, and using the raw company name seems limiting. You could probably do something fun with classifying the employer by name, but that's for another time (and category probably already includes some of that information)
+ContractTime and ContractType worry me since over half of the jobs have blanks for these fields, but there is some additional info for some of the listings.
+Category, LocationNormalized, and SourceName look like the best places to start, even if category and LocationNormalized have Adzuna's intrepretation built in.
+
+```{r CategoryLocSource}
+model <- lm(LogSalary ~ Category + LocationNormalized + SourceName, data = train)
+summary(model)$r.squared
+trainPredictions <- exp(predict(model,train))
+mae(train$SalaryNormalized,trainPredictions)
+testPredictions <- exp(predict(model,validate))
+mae(validate$SalaryNormalized,testPredictions)
+
+```
+This regression takes too long on the 10k set, and LocationNormalized has too
+many levels (there are locations in the test set that don't appear in the traing set.) Let's ditch LocationNormalized for now and go back to just Category and
+just SourceName
+
+```{r Category}
+model <- lm(LogSalary ~ Category, data = train)
+summary(model)$r.squared
+
+trainPredictions <- exp(predict(model,train))
+mae(train$SalaryNormalized,trainPredictions)
+
+testPredictions <- exp(predict(model,validate))
+mae(validate$SalaryNormalized,testPredictions)
+```
+
+The category factors alone are significant, but don't explain much of the variance, hence the low R squared and the relatively high MAE for both the training and test sets. Now just SourceName:
+
+```{r SourceName}
+model <- lm(LogSalary ~ SourceName,data = train)
+summary(model)$r.squared
+
+trainPredictions <- exp(predict(model,train))
+mae(train$SalaryNormalized,trainPredictions)
+
+newValidate <- validate
+newValidate$SourceName[!(validate$SourceName %in% train$SourceName)] <- NA
+testPredictions <- exp(predict(model,newValidate))
+mae(validate$SalaryNormalized,testPredictions)
+```
+The test set has some SourceName that aren't in the training set, blerg.
+I set those to NA and had predict ignore them, and mae() ignores NA as well.
+
+So SourceName does marginally better than Category, but has issues with
+having enough data in each category. This could improve with more data.
+
+Let's check out ContractType and ContractTime
+
+```{r contracts}
+model <- lm(LogSalary ~ ContractType + ContractTime,data = train)
+summary(model)$r.squared
+
+trainPredictions <- exp(predict(model,train))
+mae(train$SalaryNormalized,trainPredictions)
+
+testPredictions <- exp(predict(model,validate))
+mae(validate$SalaryNormalized,testPredictions)
+
+```
+
+These are crap for R squared, but the coefficients are significant, so may be
+worth including with category. Soooo, let's see what we have with 
+category and contracttime/type
+
+```{r categoryContracts}
+model <- lm(LogSalary ~ Category + ContractType + ContractTime,data = train)
+summary(model)$r.squared
+
+trainPredictions <- exp(predict(model,train))
+mae(train$SalaryNormalized,trainPredictions)
+
+testPredictions <- exp(predict(model,validate))
+mae(validate$SalaryNormalized,testPredictions)
+
+```
+Getting better, but 10k mean absolute error is pretty crap when the mean is 30k.
+Last attempt for This problem: Category, ContractType/Time, and SourceName, and we'll ignore the mismatched SourceNames for now.
+
+```{r Cat/Source/Type/Time}
+model <- lm(LogSalary ~ SourceName + Category + ContractTime + ContractTime,data = train)
+summary(model)$r.squared
+
+trainPredictions <- exp(predict(model,train))
+mae(train$SalaryNormalized,trainPredictions)
+
+newValidate <- validate
+newValidate$SourceName[!(validate$SourceName %in% train$SourceName)] <- NA
+testPredictions <- exp(predict(model,newValidate))
+mae(validate$SalaryNormalized,testPredictions)
+```
+Well, this one has the best R-Squared of the fast models, 
+and the training and test MAEs
+are the lowest, but they still aren't impressive.
+
+I just re-read the instructions and realize I forgot to try interaction terms.
+Here it goes
+
+```{r interactions}
+model <- lm(LogSalary ~ SourceName + Category + ContractTime + ContractTime + Category:ContractTime + Category:ContractType + ContractType:ContractTime,data = train)
+summary(model)$r.squared
+
+trainPredictions <- exp(predict(model,train))
+mae(train$SalaryNormalized,trainPredictions)
+
+newValidate <- validate
+newValidate$SourceName[!(validate$SourceName %in% train$SourceName)] <- NA
+testPredictions <- exp(predict(model,newValidate))
+mae(validate$SalaryNormalized,testPredictions)
+```
+The R-Squared is better, and the training MAE is as well, but the test set MAE isn't significantly better, maybe this is approaching ooverfitting? There are plenty of Category:ContractType and Category:ContractTime that are missing in the training set. This model might be best attempted with a larger training set. I'll try a larger set before submitting the final predicitons.
+
+### Problem 3: Install DAAG
+Try out cv.lm to see about improving the models
+
+
+
+
 
