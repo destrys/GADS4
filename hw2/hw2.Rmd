@@ -1,0 +1,17 @@
+Homework 2
+========================================================
+
+[Assignment Details](https://github.com/arahuja/GADS4/wiki/Regression-Assignment)
+
+```{r initialize}
+
+setwd('~/Documents/GeneralAssembly/GADS4/hw2/')
+summary(cars)
+```
+
+You can also embed plots, for example:
+
+```{r fig.width=7, fig.height=6}
+plot(cars)
+```
+
