@@ -118,7 +118,7 @@ summary(model)$r.squared
 ```
 
 ```
-## [1] 0.3988
+## [1] 0.4052
 ```
 
 ```r
@@ -127,7 +127,7 @@ mae(train$SalaryNormalized, trainPredictions)
 ```
 
 ```
-## [1] 8597
+## [1] 8533
 ```
 
 ```r
@@ -135,14 +135,12 @@ testPredictions <- exp(predict(model, validate))
 ```
 
 ```
-## Error: factor LocationNormalized has new levels Abbots Langley, Beaworthy,
-## Bolton Le Sands, Brackley, Canary Wharf, Catterick, Cradley Heath,
-## Crayford, Crediton, Driffield, Dursley, East Dean, Edgware, Elland,
-## Enniskillen, Epping, Godalming, Highbridge, Hinckley, Hornchurch,
-## Liversedge, Lockerbie, Lossiemouth, Market Rasen, Milton, New Cross,
-## Pembroke, Queenborough, Seaford, Seaham, Shipley, South Milford, St.
-## Fagans, Stockland Bristol, Swadlincote, Tooting, Waltham Forest, Waterloo,
-## Yarnton
+## Error: factor LocationNormalized has new levels Alfreton, Ashington,
+## Bacup, Ballymena, Barnwood, Clayton, Cowley, Crewkerne, Cullompton,
+## Culmhead, Dymock, Faringdon, Friern Barnet, Hartlepool, Looe, Louth,
+## Market Harborough, Matlock, Radstock, Rushden, Shipton-Under-Wychwood,
+## Silsden, Southend, Tavistock, Thame, Thorpe St. Andrew, Titchfield,
+## Wareham, Westminster, Wishaw
 ```
 
 ```r
@@ -174,7 +172,7 @@ mae(train$SalaryNormalized, trainPredictions)
 ```
 
 ```
-## [1] 10154
+## [1] 10174
 ```
 
 ```r
@@ -184,7 +182,7 @@ mae(validate$SalaryNormalized, testPredictions)
 ```
 
 ```
-## [1] 10093
+## [1] 9903
 ```
 
 
@@ -197,7 +195,7 @@ summary(model)$r.squared
 ```
 
 ```
-## [1] 0.2161
+## [1] 0.2218
 ```
 
 ```r
@@ -207,7 +205,7 @@ mae(train$SalaryNormalized, trainPredictions)
 ```
 
 ```
-## [1] 9878
+## [1] 9839
 ```
 
 ```r
@@ -219,7 +217,7 @@ mae(validate$SalaryNormalized, testPredictions)
 ```
 
 ```
-## [1] 9625
+## [1] 9934
 ```
 
 The test set has some SourceName that aren't in the training set, blerg.
@@ -237,7 +235,7 @@ summary(model)$r.squared
 ```
 
 ```
-## [1] 0.1028
+## [1] 0.103
 ```
 
 ```r
@@ -247,7 +245,7 @@ mae(train$SalaryNormalized, trainPredictions)
 ```
 
 ```
-## [1] 10594
+## [1] 10600
 ```
 
 ```r
@@ -257,7 +255,7 @@ mae(validate$SalaryNormalized, testPredictions)
 ```
 
 ```
-## [1] 10334
+## [1] 10246
 ```
 
 
@@ -272,7 +270,7 @@ summary(model)$r.squared
 ```
 
 ```
-## [1] 0.241
+## [1] 0.2401
 ```
 
 ```r
@@ -282,7 +280,7 @@ mae(train$SalaryNormalized, trainPredictions)
 ```
 
 ```
-## [1] 9774
+## [1] 9791
 ```
 
 ```r
@@ -292,7 +290,7 @@ mae(validate$SalaryNormalized, testPredictions)
 ```
 
 ```
-## [1] 9766
+## [1] 9604
 ```
 
 Getting better, but 10k mean absolute error is pretty crap when the mean is 30k.
@@ -306,7 +304,7 @@ summary(model)$r.squared
 ```
 
 ```
-## [1] 0.262
+## [1] 0.266
 ```
 
 ```r
@@ -316,7 +314,7 @@ mae(train$SalaryNormalized, trainPredictions)
 ```
 
 ```
-## [1] 9601
+## [1] 9588
 ```
 
 ```r
@@ -328,21 +326,70 @@ mae(validate$SalaryNormalized, testPredictions)
 ```
 
 ```
-## [1] 9544
+## [1] 9649
 ```
 
-Well, this one has the best R-Squared of the fast models, and the training MAE
-is the lowest, but the test set MAE isn't impressive.
+Well, this one has the best R-Squared of the fast models, 
+and the training and test MAEs
+are the lowest, but they still aren't impressive.
 
-
-
-
-
-
+I just re-read the instructions and realize I forgot to try interaction terms.
+Here it goes
 
 
 ```r
-# plot(cars)
+model <- lm(LogSalary ~ SourceName + Category + ContractTime + ContractTime + 
+    Category:ContractTime + Category:ContractType + ContractType:ContractTime, 
+    data = train)
+summary(model)$r.squared
 ```
+
+```
+## [1] 0.3283
+```
+
+```r
+
+trainPredictions <- exp(predict(model, train))
+```
+
+```
+## Warning: prediction from a rank-deficient fit may be misleading
+```
+
+```r
+mae(train$SalaryNormalized, trainPredictions)
+```
+
+```
+## [1] 9134
+```
+
+```r
+
+newValidate <- validate
+newValidate$SourceName[!(validate$SourceName %in% train$SourceName)] <- NA
+testPredictions <- exp(predict(model, newValidate))
+```
+
+```
+## Warning: prediction from a rank-deficient fit may be misleading
+```
+
+```r
+mae(validate$SalaryNormalized, testPredictions)
+```
+
+```
+## [1] 9352
+```
+
+The R-Squared is better, and the training MAE is as well, but the test set MAE isn't significantly better, maybe this is approaching ooverfitting? There are plenty of Category:ContractType and Category:ContractTime that are missing in the training set. This model might be best attempted with a larger training set. I'll try a larger set before submitting the final predicitons.
+
+### Problem 3: Install DAAG
+Try out cv.lm to see about improving the models
+
+
+
 
 
