@@ -8,8 +8,8 @@ setwd('~/Documents/GeneralAssembly/GADS4/hw2/')
 ```
 
 ```{r loadAndExplore}
-trainfull_10k <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train.csv')
-str(trainfull_10k)
+trainfull <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train.csv')
+str(trainfull)
 ```
 
 Taken from [kaggle site](http://www.kaggle.com/c/job-salary-prediction/data).
@@ -29,27 +29,31 @@ remove salary info, may have removed other numbers.
 
 We're prdiciting SalaryNormalized, so let's check it out a little:
 ```{r fig.width=7, fig.height=6}
-summary(trainfull_10k$SalaryNormalized)
-hist(trainfull_10k$SalaryNormalized)
-hist(log(trainfull_10k$SalaryNormalized))
+summary(trainfull$SalaryNormalized)
+hist(trainfull$SalaryNormalized)
+hist(log(trainfull$SalaryNormalized))
 
 ```
 SalaryNormalized is pretty skewed, but log(SalaryNormalized) looks pretty
 gaussian, so let's predict that instead
 ```{r log}
-trainfull_10k$LogSalary <- log(trainfull_10k$SalaryNormalized)
+trainfull$LogSalary <- log(trainfull$SalaryNormalized)
 ```
 
 
 ### Problem 1: Split the data into training and test sets.
 
-I'll do 90/10 train/validate
+I'll do 90/10 train/validate. I liked Aaron's fold field that he showed in class.
+
 
 ```{r splitTrain}
-m = length(trainfull_10k[,1]) # number of rows
-validate_indx <- sample.int(m, size = floor(0.1*m))
-validate <- trainfull_10k[validate_indx,]
-train <- trainfull_10k[-validate_indx,]
+
+m = nrow(trainfull) # number of rows
+trainfull$fold <- sample(1:10, m, replace = T)
+
+n=1
+validate <- trainfull[trainfull$fold == n]
+train <- trainfull[trainfull$fold != n,]
 ```
 
 ### Problem 2: Build a simple linear regression using the available categorical variables.
@@ -60,6 +64,35 @@ Before doing the regression, let's define a coupe functions to make life cleaner
 
 mae <- function(values,predictions){
   return(mean(abs(values - predictions),na.rm=T))
+}
+
+hw2.cv <- function(form,data) {
+  r.squares <- c()
+  train_mae <- c()
+  test_mae <- c()
+  for (i in 1:max(data$fold)) {
+    train <- data[data$fold != i,]
+    test <- data[data$fold == i,]
+    
+    model <- lm(form, data = train)
+    
+    r.squares <- c(r.squares,summary(model)$r.squared)
+    trainPredictions <- exp(predict(model,train))
+    testPredictions <- exp(predict(model,test))
+    
+    train_mae <- c(train_mae,mae(train$SalaryNormalized,trainPredictions))
+    test_mae <- c(test_mae,mae(test$SalaryNormalized,testPredictions))
+    }
+  cat('Mean R.Squared: ',mean(r.squares))
+  cat(' Mean Training MAE: ',mean(train_mae))
+  cat(' Mean Test Set MAE: ',mean(test_mae))
+  return(model) 
+}
+
+reduceFactors <- function(frame,field,newname,number){
+  factorsToKeep <- names(sort(summary(frame[,c(field)]),decreasing = T)[1:number])
+  frame[,c(newname)] <- factor(frame[,c(field)],levels = factorsToKeep)
+  return(frame)
 }
 
 ```
@@ -84,29 +117,16 @@ many levels (there are locations in the test set that don't appear in the traing
 just SourceName
 
 ```{r Category}
-model <- lm(LogSalary ~ Category, data = train)
-summary(model)$r.squared
-
-trainPredictions <- exp(predict(model,train))
-mae(train$SalaryNormalized,trainPredictions)
-
-testPredictions <- exp(predict(model,validate))
-mae(validate$SalaryNormalized,testPredictions)
+form <- LogSalary ~ Category
+model <- hw2.cv(form,trainfull)
 ```
 
 The category factors alone are significant, but don't explain much of the variance, hence the low R squared and the relatively high MAE for both the training and test sets. Now just SourceName:
 
 ```{r SourceName}
-model <- lm(LogSalary ~ SourceName,data = train)
-summary(model)$r.squared
-
-trainPredictions <- exp(predict(model,train))
-mae(train$SalaryNormalized,trainPredictions)
-
-newValidate <- validate
-newValidate$SourceName[!(validate$SourceName %in% train$SourceName)] <- NA
-testPredictions <- exp(predict(model,newValidate))
-mae(validate$SalaryNormalized,testPredictions)
+form <- LogSalary ~ SourceNameReduced
+trainfull <- reduceFactors(trainfull,'SourceName','SourceNameReduced',20)
+model <- hw2.cv(form,trainfull)
 ```
 The test set has some SourceName that aren't in the training set, blerg.
 I set those to NA and had predict ignore them, and mae() ignores NA as well.
@@ -117,15 +137,8 @@ having enough data in each category. This could improve with more data.
 Let's check out ContractType and ContractTime
 
 ```{r contracts}
-model <- lm(LogSalary ~ ContractType + ContractTime,data = train)
-summary(model)$r.squared
-
-trainPredictions <- exp(predict(model,train))
-mae(train$SalaryNormalized,trainPredictions)
-
-testPredictions <- exp(predict(model,validate))
-mae(validate$SalaryNormalized,testPredictions)
-
+form <- LogSalary ~ ContractType + ContractTime
+model <- hw2.cv(form,trainfull)
 ```
 
 These are crap for R squared, but the coefficients are significant, so may be
@@ -133,31 +146,18 @@ worth including with category. Soooo, let's see what we have with
 category and contracttime/type
 
 ```{r categoryContracts}
-model <- lm(LogSalary ~ Category + ContractType + ContractTime,data = train)
-summary(model)$r.squared
-
-trainPredictions <- exp(predict(model,train))
-mae(train$SalaryNormalized,trainPredictions)
-
-testPredictions <- exp(predict(model,validate))
-mae(validate$SalaryNormalized,testPredictions)
-
+form <- LogSalary ~ Category + ContractType + ContractTime
+model <- hw2.cv(form,trainfull)
 ```
 Getting better, but 10k mean absolute error is pretty crap when the mean is 30k.
 Last attempt for This problem: Category, ContractType/Time, and SourceName, and we'll ignore the mismatched SourceNames for now.
 
 ```{r Cat/Source/Type/Time}
-model <- lm(LogSalary ~ SourceName + Category + ContractTime + ContractTime,data = train)
-summary(model)$r.squared
-
-trainPredictions <- exp(predict(model,train))
-mae(train$SalaryNormalized,trainPredictions)
-
-newValidate <- validate
-newValidate$SourceName[!(validate$SourceName %in% train$SourceName)] <- NA
-testPredictions <- exp(predict(model,newValidate))
-mae(validate$SalaryNormalized,testPredictions)
+trainfull <- reduceFactors(trainfull,'Category','CategoryReduced',20)
+form <- LogSalary ~ SourceNameReduced + CategoryReduced + ContractTime + ContractTime
+model <- hw2.cv(form,trainfull)
 ```
+
 Well, this one has the best R-Squared of the fast models, 
 and the training and test MAEs
 are the lowest, but they still aren't impressive.
@@ -166,23 +166,106 @@ I just re-read the instructions and realize I forgot to try interaction terms.
 Here it goes
 
 ```{r interactions}
-model <- lm(LogSalary ~ SourceName + Category + ContractTime + ContractTime + Category:ContractTime + Category:ContractType + ContractType:ContractTime,data = train)
-summary(model)$r.squared
-
-trainPredictions <- exp(predict(model,train))
-mae(train$SalaryNormalized,trainPredictions)
-
-newValidate <- validate
-newValidate$SourceName[!(validate$SourceName %in% train$SourceName)] <- NA
-testPredictions <- exp(predict(model,newValidate))
-mae(validate$SalaryNormalized,testPredictions)
+form <- LogSalary ~ SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
+model <- hw2.cv(form,trainfull)
 ```
 The R-Squared is better, and the training MAE is as well, but the test set MAE isn't significantly better, maybe this is approaching ooverfitting? There are plenty of Category:ContractType and Category:ContractTime that are missing in the training set. This model might be best attempted with a larger training set. I'll try a larger set before submitting the final predicitons.
 
 ### Problem 3: Install DAAG
 Try out cv.lm to see about improving the models
 
+```{r daag}
+library('DAAG')
+model <- lm(SalaryNormalized ~ Category + ContractType + ContractTime,data = trainfull)
+test <- cv.lm(trainfull,model,m=3)
+
+```
+
+### Problem 4: Merge Location_Tree.csv on to your dataset
 
 
+I'm not sure if turning the Location Tree into a data frame was supposed to
+be complicated, but I found that the rows are different lengths, so before
+converting the file into a data frame I had to set the length of each row to 5.
+
+I could image a different approach could be looping through each 
+LocationNormalized, finding a matching field in the location tree and
+filling in the location fields that way...
+
+```{r buildLocation_TreeFrame}
+location_tree <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/Location_Tree.csv',stringsAsFac = F)
+
+location_list <- strsplit(location_tree[,1],"~")
+
+fixlength <- function(x){
+  flat <- unlist(x)
+  length(flat) <- 5
+  return(flat)
+}
+location_list <- llply(location_list,fixlength)
+
+loc_frame <- data.frame(matrix(unlist(location_list),nrow=31762,byrow=T))
+colnames(loc_frame)=c('Country','Region','SubRegion','SubSubRegion','MicroRegion')
+str(loc_frame)
+```
+
+Now to merge the locations and the data. It's a little complicated because 
+LocationNormalized is not always the same level in the location tree.
+
+```{r mergeframes}
+mergelocation <- function(training,loc_frame){
+trainmerged <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='MicroRegion')
+trainmerged$MicroRegion <- droplevels(trainmerged$LocationNormalized)
+loc_frame <- unique(loc_frame[,1:4])
+
+scrap <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='SubSubRegion')
+scrap$SubSubRegion <- droplevels(scrap$LocationNormalized)
+scrap$MicroRegion <- NA
+trainmerged <- rbind(trainmerged,scrap)
+loc_frame <- unique(loc_frame[,1:3])
+
+scrap <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='SubRegion')
+scrap$SubRegion <- droplevels(scrap$LocationNormalized)
+scrap$SubSubRegion <- NA
+scrap$MicroRegion <- NA
+trainmerged <- rbind(trainmerged,scrap)
+
+loc_frame <- unique(loc_frame[,1:2])
+scrap <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='Region')
+scrap$Region <- droplevels(scrap$LocationNormalized)
+scrap$SubRegion <- NA
+scrap$SubSubRegion <- NA
+scrap$MicroRegion <- NA
+trainmerged <- rbind(trainmerged,scrap)
+
+scrap <- training[training$LocationNormalized == 'UK',]
+scrap$Country <- 'UK'
+scrap$Region <- NA
+scrap$SubRegion <- NA
+scrap$SubSubRegion <- NA
+scrap$MicroRegion <- NA
+trainmerged <- rbind(trainmerged,scrap)
+
+trainmerged <- trainmerged[!duplicated(trainmerged$Id),]
+return(trainmerged)
+}
+
+merged <- mergelocation(trainfull,loc_frame)
+
+```
+
+Ok, here's something really annoying about location. There are labels with the same name that are in different regions, and it appears to me that you can't tell which one it is. Not sure what's best to do in this situation. I don't want to have duplicate entries, so I'm going to take unique Id values. Some of these may be misclassified, but that's just something to remember for now.
+
+I wrapped up the merging in a function so I could use it on a larger set faster.
+
+Now for much more exiciting models, let's use location!
+
+```{r locationModeling}
+merged <- reduceFactors(merged,'Region','RegionReduced',15)
+form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
+model <- hw2.cv(form,merged)
+
+```
+Looking better! Down to below 9k MAE in both the training and the test set.
 
 
