@@ -3,15 +3,20 @@ Homework 2
 
 [Assignment Details](https://github.com/arahuja/GADS4/wiki/Regression-Assignment)
 
+**Update:** Fixing the NA problem, and completely reworked how the location tree
+is handled.
+
 ```{r initialize}
 library(plyr)
 library(knitr)
+library(DAAG)
+library(tm)
+library(foreach)
 setwd('~/Documents/GeneralAssembly/GADS4/hw2/')
 ```
 
 ```{r loadAndExplore}
-trainfull <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train.csv')
-str(trainfull)
+data <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train.csv')
 ```
 
 Taken from [kaggle site](http://www.kaggle.com/c/job-salary-prediction/data).
@@ -30,37 +35,39 @@ remove salary info, may have removed other numbers.
 * SourceName - website where job was advertised
 
 We're prdiciting SalaryNormalized, so let's check it out a little:
+
 ```{r fig.width=7, fig.height=6}
-summary(trainfull$SalaryNormalized)
-hist(trainfull$SalaryNormalized)
-hist(log(trainfull$SalaryNormalized))
+summary(data$SalaryNormalized)
+hist(data$SalaryNormalized)
+hist(log(data$SalaryNormalized))
 
 ```
+
 SalaryNormalized is pretty skewed, but log(SalaryNormalized) looks pretty
-gaussian, so let's predict that instead
-```{r log}
-trainfull$LogSalary <- log(trainfull$SalaryNormalized)
-```
+gaussian, so let's predict that instead. Also, let's ditch FullDescription since we're not going to use that, at least until the very end of the assignment
 
+```{r log}
+data$LogSalary <- log(data$SalaryNormalized)
+data$FullDescription <- NA
+```
 
 ### Problem 1: Split the data into training and test sets.
 
 I'll do 90/10 train/validate. I liked Aaron's fold field that he showed in class.
 
-
 ```{r splitTrain}
 
-m = nrow(trainfull) # number of rows
-trainfull$fold <- sample(1:10, m, replace = T)
+m = nrow(data) # number of rows
+data$fold <- sample(1:10, m, replace = T)
 
 n=1
-test <- trainfull[trainfull$fold == n,]
-train <- trainfull[trainfull$fold != n,]
+test <- data[data$fold == n,]
+train <- data[data$fold != n,]
 ```
 
 ### Problem 2: Build a simple linear regression using the available categorical variables.
 
-Before doing the regression, let's define a coupe functions to make life cleaner:
+Before doing the regression, let's define a couple functions to make life cleaner:
 
 ```{r MAEMSE}
 
@@ -68,13 +75,13 @@ mae <- function(values,predictions){
   return(mean(abs(values - predictions),na.rm=T))
 }
 
-hw2.cv <- function(form,data) {
+hw2.cv.lm <- function(form,frame) {
   r.squares <- c()
   train_mae <- c()
   test_mae <- c()
-  for (i in 1:max(data$fold)) {
-    train <- data[data$fold != i,]
-    test <- data[data$fold == i,]
+  for (i in 1:max(frame$fold)) {
+    train <- frame[frame$fold != i,]
+    test <- frame[frame$fold == i,]
     
     model <- lm(form, data = train)
     
@@ -93,7 +100,12 @@ hw2.cv <- function(form,data) {
 
 reduceFactors <- function(frame,field,newname,number){
   factorsToKeep <- names(sort(summary(frame[,c(field)]),decreasing = T)[1:number])
-  frame[,c(newname)] <- factor(frame[,c(field)],levels = factorsToKeep)
+  temp <- frame[,c(field)]
+  levels(temp) <- c(levels(temp),' ')
+  withNAs <- factor(temp,levels = factorsToKeep)
+  temp[is.na(withNAs)] <- ' '
+  woNAs <- factor(temp)
+  frame[,c(newname)] <- woNAs
   return(frame)
 }
 
@@ -107,7 +119,7 @@ Category, LocationNormalized, and SourceName look like the best places to start,
 
 ```{r CategoryLocSource}
 form <- LogSalary ~ Category + LocationNormalized + SourceName
-model <- hw2.cv(form,trainfull)
+model <- hw2.cv.lm(form,data)
 ```
 This regression takes too long on the 10k set, and LocationNormalized has too
 many levels (there are locations in the test set that don't appear in the traing set.) Let's ditch LocationNormalized for now and go back to just Category and
@@ -115,18 +127,19 @@ just SourceName
 
 ```{r Category}
 form <- LogSalary ~ Category
-model <- hw2.cv(form,trainfull)
+model <- hw2.cv.lm(form,data)
 ```
 
 The category factors alone are significant, but don't explain much of the variance, hence the low R squared and the relatively high MAE for both the training and test sets. Now just SourceName:
 
 ```{r SourceName}
 form <- LogSalary ~ SourceNameReduced
-trainfull <- reduceFactors(trainfull,'SourceName','SourceNameReduced',20)
-model <- hw2.cv(form,trainfull)
+data <- reduceFactors(data,'SourceName','SourceNameReduced',20)
+model <- hw2.cv.lm(form,data)
 ```
-The test set has some SourceName that aren't in the training set, blerg.
-I set those to NA and had predict ignore them, and mae() ignores NA as well.
+
+The test sets have some SourceName that aren't in the training set, blerg.
+I set those to ' ' and had predict ignore them, and mae() ignores NA as well.
 
 So SourceName does marginally better than Category, but has issues with
 having enough data in each category. This could improve with more data.
@@ -135,7 +148,7 @@ Let's check out ContractType and ContractTime
 
 ```{r contracts}
 form <- LogSalary ~ ContractType + ContractTime
-model <- hw2.cv(form,trainfull)
+model <- hw2.cv.lm(form,data)
 ```
 
 These are crap for R squared, but the coefficients are significant, so may be
@@ -144,143 +157,251 @@ category and contracttime/type
 
 ```{r categoryContracts}
 form <- LogSalary ~ Category + ContractType + ContractTime
-model <- hw2.cv(form,trainfull)
+model <- hw2.cv.lm(form,data)
 ```
-Getting better, but 10k mean absolute error is pretty crap when the mean is 30k.
+
+Getting better, but 9.7k mean absolute error is pretty crap when the mean is 30k.
 Last attempt for This problem: Category, ContractType/Time, and SourceName, and we'll ignore the mismatched SourceNames for now.
 
 ```{r Cat/Source/Type/Time}
-trainfull <- reduceFactors(trainfull,'Category','CategoryReduced',20)
-form <- LogSalary ~ SourceNameReduced + CategoryReduced + ContractTime + ContractTime
-model <- hw2.cv(form,trainfull)
+data <- reduceFactors(data,'Category','CategoryReduced',15)
+form <- LogSalary ~ SourceNameReduced + Category + ContractTime + ContractTime
+model <- hw2.cv.lm(form,data)
 ```
 
 Well, this one has the best R-Squared of the fast models, 
-and the training and test MAEs
-are the lowest, but they still aren't impressive.
+and the training and test MAEs are on par with the Category and Type/Time model, but they still aren't impressive.
 
 I just re-read the instructions and realize I forgot to try interaction terms.
 Here it goes
 
 ```{r interactions}
-form <- LogSalary ~ SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
-model <- hw2.cv(form,trainfull)
+form <- LogSalary ~ SourceNameReduced + Category + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
+model <- hw2.cv.lm(form,data)
 ```
-The R-Squared is better, and the training MAE is as well, but the test set MAE isn't significantly better, maybe this is approaching ooverfitting? There are plenty of Category:ContractType and Category:ContractTime that are missing in the training set. This model might be best attempted with a larger training set. I'll try a larger set before submitting the final predicitons.
+
+You'll notice that for the interaction terms I used CategoryReduced instead of Category. This pairs up just the top 15 Categories instead of doing the full set.
+I found this to be much faster to run, and comparable to using many Categories.
+
+The measures are all better, but we're starting to see a separation in the
+training and the test set MAEs. Maybe this is evidence of overfitting?
+I'll be sure to try this model with the larger datasets and see if that helps.
+
 
 ### Problem 3: Install DAAG
 Try out cv.lm to see about improving the models
 
 ```{r daag}
 library('DAAG')
-model <- lm(SalaryNormalized ~ Category + ContractType + ContractTime,data = trainfull)
-test <- cv.lm(trainfull,model,m=3)
-
+form <- formula(LogSalary ~ SourceNameReduced + Category + ContractType + 
+        ContractTime + CategoryReduced:ContractTime +
+        CategoryReduced:ContractType)
+test <- cv.lm(df = data,form.lm = form,m=3,printit=F)
+# ms = 0.148
+form <- formula(LogSalary ~ SourceNameReduced + Category + ContractType + 
+        ContractTime + CategoryReduced:ContractTime +
+        CategoryReduced:ContractType + ContractType:ContractTime)
+test <- cv.lm(df = data,form.lm = form,m=3,printit=F)
+#ms = 0.148
+form <- formula(LogSalary ~ SourceNameReduced + Category + ContractType + 
+        ContractTime)
+test <- cv.lm(df = data,form.lm = form,m=3,printit=F)
+#ms = 0.152
 ```
 
-### Problem 4: Merge Location_Tree.csv on to your dataset
+It's confusing to use, but I think this is showing that the interaction terms
+do improve the mean square error (ms), but that the ContractType:ContractTime
+term doesn't seem to be helping.
 
+The plots nice, but I don't like that I don't have access to the coefficients 
+of the models.
+
+### Problem 4: Merge Location_Tree.csv on to your dataset
 
 I'm not sure if turning the Location Tree into a data frame was supposed to
 be complicated, but I found that the rows are different lengths, so before
 converting the file into a data frame I had to set the length of each row to 5.
 
-I could image a different approach could be looping through each 
+I could imagine a different approach could be looping through each 
 LocationNormalized, finding a matching field in the location tree and
 filling in the location fields that way...
 
-```{r buildLocation_TreeFrame}
+**Update:** Changing this to my imagined way. I think it will be simpler in the
+end.
+
+```{r loadLocation}
 location_tree <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/Location_Tree.csv',stringsAsFac = F)
 
 location_list <- strsplit(location_tree[,1],"~")
+```
+
+I'm going to define the Location Tree as
+Country > Region > SubRegion > SubSubRegion > MicroRegion
+
+The new approach is to loop through the location_list, see if 
+LocationNormalized matches any of the fields and if so, grab the 
+Region and SubRegion field and put them in the dataframe.
+
+I think there is some semi-intelligent way of doing this with R's 
+list-apply stuff.
+
+**Q:** Are functions in the global namespace? If I use functions in functions, does everything behave properly?
+
+
+```{r insertLocation}
 
 fixlength <- function(x){
   flat <- unlist(x)
   length(flat) <- 5
+  flat[is.na(flat)] <- ' '
   return(flat)
 }
-location_list <- llply(location_list,fixlength)
 
-loc_frame <- data.frame(matrix(unlist(location_list),nrow=31762,byrow=T))
-colnames(loc_frame)=c('Country','Region','SubRegion','SubSubRegion','MicroRegion')
-str(loc_frame)
+# I'm not sure this is necessary with the new non-merge approach, but I'm
+# pretty sure it won't hurt either.
+
+location_list <- llply(location_list,fixlength)
+location_matrix <- matrix(unlist(location_list),ncol=5,byrow=T)
+
+# Since I'm not using merge anymore, I think keeping the locations in a 
+# list is better.
+#loc_frame <- data.frame(matrix(unlist(location_list),nrow=31762,byrow=T))
+#colnames(loc_frame)=c('Country','Region','SubRegion','SubSubRegion','MicroRegion')
 ```
 
 Now to merge the locations and the data. It's a little complicated because 
 LocationNormalized is not always the same level in the location tree.
 
 ```{r mergeframes}
-mergelocation <- function(training,loc_frame){
-trainmerged <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='MicroRegion')
-trainmerged$MicroRegion <- droplevels(trainmerged$LocationNormalized)
-loc_frame <- unique(loc_frame[,1:4])
 
-scrap <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='SubSubRegion')
-scrap$SubSubRegion <- droplevels(scrap$LocationNormalized)
-scrap$MicroRegion <- NA
-trainmerged <- rbind(trainmerged,scrap)
-loc_frame <- unique(loc_frame[,1:3])
-
-scrap <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='SubRegion')
-scrap$SubRegion <- droplevels(scrap$LocationNormalized)
-scrap$SubSubRegion <- NA
-scrap$MicroRegion <- NA
-trainmerged <- rbind(trainmerged,scrap)
-
-loc_frame <- unique(loc_frame[,1:2])
-scrap <- merge(training,loc_frame,by.x = "LocationNormalized",by.y='Region')
-scrap$Region <- droplevels(scrap$LocationNormalized)
-scrap$SubRegion <- NA
-scrap$SubSubRegion <- NA
-scrap$MicroRegion <- NA
-trainmerged <- rbind(trainmerged,scrap)
-
-scrap <- training[training$LocationNormalized == 'UK',]
-scrap$Country <- 'UK'
-scrap$Region <- NA
-scrap$SubRegion <- NA
-scrap$SubSubRegion <- NA
-scrap$MicroRegion <- NA
-trainmerged <- rbind(trainmerged,scrap)
-
-trainmerged <- trainmerged[!duplicated(trainmerged$Id),]
-return(trainmerged)
+findRegions <- function(loc){
+    #location_matrix must be globally defined
+    loc_rows <- nrow(location_matrix)
+    indx <- grep(paste0('^',loc,'$'),location_matrix)
+    if (length(indx) > 0) {
+      return(location_matrix[indx[1] %% loc_rows,2:3])
+    } else return(c(' ',' '))
 }
 
-merged <- mergelocation(trainfull,loc_frame)
+#Tests
+
+findRegions('Shadwell')
+findRegions('Victoria Park')
+findRegions('North Landan')
+findRegions('Angel')
+
+# Works for me. Returns a single pair of values, returns blanks if it doesn't 
+# find a location. Now to wrap it up in lapply
+
+#data <- llply(data$LocationNormalized,findRegions,.progress=create_progress_bar('text'))
+```
+
+That is brutally slow by my impatient standards.
+Going to try unwrapping it into a loop.
+
+```{r fasterLocation}
+#loc_rows <- nrow(location_matrix)
+#Region <- character(length = nrow(data))
+#SubRegion <- character(length = nrow(data))
+#for (i in 1:nrow(data)){
+#  indx <- grep(paste0('^',data$LocationNormalized[i],'$'),location_matrix)
+#  if (length(indx) > 0) {
+#    row_indx <- indx[1] %% loc_rows
+#    if (row_indx == 0) row_indx <- loc_rows
+#    Region[i] <- location_matrix[row_indx,2]
+#    SubRegion[i] <- location_matrix[row_indx,3]
+#    } else {
+#      Region[i] <- ' '
+#      SubRegion[i] <- ' '
+#    }
+#}
+
+#data$Region <- factor(Region)
+#data$SubRegion <- factor(SubRegion)
 
 ```
 
-Ok, here's something really annoying about location. There are labels with the same name that are in different regions, and it appears to me that you can't tell which one it is. Not sure what's best to do in this situation. I don't want to have duplicate entries, so I'm going to take unique Id values. Some of these may be misclassified, but that's just something to remember for now.
+Still brutally slow. This is something to do in another language. 
+I'm going to leave it here as an example of what you _could_ do, but 
+if I have the inclination, I'll write a script to produce a mergable table...
 
-I wrapped up the merging in a function so I could use it on a larger set faster.
+    cat Location_Tree.csv | sed 's/~/,/g' | sed 's/"//g' > Location_Tree2.csv
+    awk -f buildMergable.awk Location_Tree2.csv |sort -u -t , -k 1,1 >mergableTable.csv
+    echo UK,undef,undef,1 >> mergableTable.csv
+    
+Boom. After banging my head against it a little bit, it makes the most sense to
+ignore the train.csv files and instead just build a file of all possible
+locationNormalized values. This is blazing fast compared to anything else 
+I tried. The awk script runs through the Location_Tree file once, outputing 
+up to 5 times the lines of the tree, although actually it's about 4 times.
+That output is sorted and uniqued on the first field (what we'll call 
+LocationNormalized). This isn't perfect because there are degeneracies - some 
+Locations occur in multiple regions.
+
+I added a depth field just for fun, it specifies how 'deep' down the location
+tree that location is.
+
+```{r fastestLocation}
+# cat Location_Tree.csv | sed 's/~/,/g' | sed 's/"//g' > Location_Tree2.csv
+# awk -f buildMergable.awk Location_Tree2.csv |sort -u -t , -k 1,1 >mergableTable.csv
+
+location_df <- read.csv('~/Documents/GeneralAssembly/GADS4/hw2/mergableTable.csv',head = F)
+colnames(location_df) <- c('LocationNormalized','Region','SubRegion','depth')
+
+data <- merge(data,location_df,by='LocationNormalized',all.x=T)
+# Need to ditch the NAs before using the merged locations. There are only 8.
+
+data$depth[is.na(data$depth)] = 0
+data$Region[is.na(data$Region)] = 'undef'
+data$SubRegion[is.na(data$SubRegion)] = 'undef'
+
+```
+
+**SUCCESS!**
 
 Now for much more exiciting models, let's use location!
 
 ```{r locationModeling}
-merged <- reduceFactors(merged,'Region','RegionReduced',15)
-merged <- reduceFactors(merged,'SubRegion','SubRegionReduced',15)
-form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
-model <- hw2.cv(form,merged)
+data <- reduceFactors(data,'Region','RegionReduced',12)
+data$RegionReduced[data$RegionReduced == ' '] <- 'undef'
+data <- reduceFactors(data,'SubRegion','SubRegionReduced',20)
+data$SubRegionReduced[data$SubRegionReduced == ' '] <- 'undef'
+form <- LogSalary ~ RegionReduced + SubRegionReduced + SourceNameReduced + Category + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
+model <- hw2.cv.lm(form,data)
 
 ```
-Looking better! Down to below 9k MAE in both the training and the test set.
+Looking better! Down to ~9.1k MAE in both the training and the test set.
 
-Before trying out glmnet, I was to try the next larger dataset:
+
+Before trying out glmnet, I was to try the next larger dataset.
+This also allows me to regroup all the processing of the data datafram in
+one place.
+
 ```{r bigger}
-trainbigger <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train_50k.csv')
-trainbigger$LogSalary <- log(trainbigger$SalaryNormalized)
-trainbigger$fold <- sample(1:10, nrow(trainbigger), replace = T)
-trainbigger <- reduceFactors(trainbigger,'SourceName','SourceNameReduced',20)
-trainbigger <- reduceFactors(trainbigger,'Category','CategoryReduced',20)
-trainbigger <- mergelocation(trainbigger,loc_frame)
-trainbigger <- reduceFactors(trainbigger,'Region','RegionReduced',15)
+bigger <- read.csv('~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train_50k.csv')
+bigger$LogSalary <- log(bigger$SalaryNormalized)
+bigger$FullDescription <- NA
+bigger$fold <- sample(1:10, nrow(bigger), replace = T)
+bigger <- reduceFactors(bigger,'SourceName','SourceNameReduced',20)
+bigger <- reduceFactors(bigger,'Category','CategoryReduced',20)
+## Locations
+bigger <- merge(bigger,location_df,by='LocationNormalized',all.x=T)
+sum(is.na(bigger$depth))
+bigger$depth[is.na(bigger$depth)] = 0
+bigger$Region[is.na(bigger$Region)] = 'undef'
+bigger$SubRegion[is.na(bigger$SubRegion)] = 'undef'
 
-form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
-model <- hw2.cv(form,trainbigger)
+bigger <- reduceFactors(bigger,'Region','RegionReduced',12)
+bigger$RegionReduced[bigger$RegionReduced == ' '] <- 'undef'
+bigger <- reduceFactors(bigger,'SubRegion','SubRegionReduced',20)
+bigger$SubRegionReduced[data$SubRegionReduced == ' '] <- 'undef'
+
+form <- LogSalary ~ RegionReduced + SubRegionReduced + Category + SourceNameReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
+model <- hw2.cv.lm(form,bigger)
+
 ```
-THis is a little awkward, the MAEs are getting larger with the larger datasets,
-~9.2k for the 50k and ~9.5 for the 100k. Let's move on the glmnet and text processing.
+This is a little awkward, the MAE is getting larger with the larger dataset,
+~10k for the 50k.
 
 ### Problem 5: Using the GLMnet package, try glm and cv.glmnet to see if you can build a better model.
 
@@ -308,23 +429,22 @@ hw2.cv.glm <- function(form,data) {
   return(model) 
 }
 
-form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
-model <- hw2.cv.glm(form,merged)
+form <- LogSalary ~ RegionReduced + SubRegionReduced + SourceNameReduced + Category + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
+model <- hw2.cv.glm(form,data)
 ```
 
-Same result as the lm revsion. I expected it, it happened, cool.
+Same result as the lm revsion as expected, it happened, cool.
 Now let's get our regularization on.
 
 ```{r}
 library(glmnet)
-form <- LogSalary ~RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
+form <- LogSalary ~ RegionReduced + SubRegionReduced + SourceNameReduced + Category + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
 
-r.squares <- c()
 train_mae <- c()
 test_mae <- c()
-  for (i in 1:max(merged$fold)) {
-    train <- merged[merged$fold != i,]
-    test <- merged[merged$fold == i,]
+  for (i in 1:max(data$fold)) {
+    train <- data[data$fold != i,]
+    test <- data[data$fold == i,]
     m <- model.frame(form,train)
     mtest <- model.frame(form,test)
     x <- model.matrix(form,data = m)
@@ -341,15 +461,59 @@ test_mae <- c()
 mean(train_mae)
 mean(test_mae)
 
+
 ```
-Looks pretty hot. Now to use cv.glmnet to get the best value of lambda and then try it all on a larger set.
+Looks cool. Now to use cv.glmnet to get the best value of lambda and then try it all on a larger set.
 
 ```{r cv.glmnet}
-form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime
 
-i <- 1
-train <- merged[merged$fold != i,]
-test <- merged[merged$fold == i,]
+form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced +
+  ContractTime + ContractType + CategoryReduced:ContractTime + 
+  CategoryReduced:ContractType + ContractType:ContractTime + 
+  RegionReduced:CategoryReduced
+
+hw2.cv.glmnet <- function(form,frame,folds) {
+  train_mae <- c()
+  test_mae <- c()
+    for (i in 1:folds) {
+      train <- frame[frame$fold != i,]
+      test <- frame[frame$fold == i,]
+
+      m <- model.frame(form,train)
+      x <- model.matrix(form,data = m)
+      y <- matrix(train$LogSalary)
+
+      model <- cv.glmnet(x,y,type.measure='mae')
+
+      mtest <- model.frame(form,test)
+      testx <- model.matrix(form,data=mtest)
+
+      trainPredictions <- exp(predict(model,x,s="lambda.min"))
+      testPredictions <- exp(predict(model,testx,s="lambda.min"))
+      train_mae <- c(train_mae,mae(exp(train$LogSalary),trainPredictions))
+      test_mae <- c(test_mae,mae(exp(test$LogSalary),testPredictions))
+      }
+  print(train_mae)
+  cat(' Mean Training MAE: ')
+  print(mean(train_mae))
+  print(test_mae)
+  cat(' Mean Test Set MAE: ')
+  print(mean(test_mae))
+  return(model) 
+  }
+
+model <- hw2.cv.glmnet(form,data,10)
+
+```
+
+Nice, down to ~8.7k for train and ~8.9k for test
+
+Let's try on the larger dataset
+
+```{r}
+i <- 2
+train <- bigger[bigger$fold != i,]
+test <- bigger[bigger$fold == i,]
 
 m <- model.frame(form,train)
 x <- model.matrix(form,data = m)
@@ -365,19 +529,18 @@ testPredictions <- exp(predict(model,testx,s="lambda.min"))
 
 mae(exp(m$LogSalary),trainPredictions)
 mae(exp(mtest$LogSalary),testPredictions)
-
 ```
 
-Nice, down to ~8.8k for train and test set sae.
+Hmph. Still 10k.
 
 ### Problem 6: Now let's try adding some text features
 
 ```{r textFeatures}
 library('tm')
 
-src <- DataframeSource(data.frame(merged$Title))
+src <- DataframeSource(data.frame(data$Title))
 c <- Corpus(src)
-dtm <- DocumentTermMatrix(c)
+dtm <- DocumentTermMatrix(c,control=list(termFreq=list(stopwords = TRUE)))
 dtmcols <- colnames(dtm)
 
 analysts <- rowSums(as.matrix(dtm[,grep('analy',dtmcols,ignore.case=T)]))
@@ -385,18 +548,17 @@ engineers <- rowSums(as.matrix(dtm[,grep('engine',dtmcols,ignore.case=T)]))
 software <- rowSums(as.matrix(dtm[,grep('soft',dtmcols,ignore.case=T)]))
 restaurant <- rowSums(as.matrix(dtm[,grep('restau',dtmcols,ignore.case=T)]))
 worker <- rowSums(as.matrix(dtm[,grep('worker',dtmcols,ignore.case=T)]))
-college <- rowSums(as.matrix(dtm[,grep('colle|univers',dtmcols,ignore.case=T)]))
 days <- rowSums(as.matrix(dtm[,grep('day',dtmcols,ignore.case=T)]))
 
-text_data <- cbind(merged,analysts,engineers,software,restaurant,worker,college,days)
+text_data <- cbind(data,analysts,engineers,software,restaurant,worker,days)
 
+form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + days + CategoryReduced:RegionReduced
 
-form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + college + days
+model <- hw2.cv.lm(form,text_data)
 
-form <- LogSalary ~ analysts + engineers + software + restaurant + worker + college + days
-
-model <- hw2.cv(form,text_data)
+model <- hw2.cv.glmnet(form,text_data,3)
 ```
+
 That's a tad better than before, but not amazinng. Instead of guessing at title words, lets' look at common words:
 
 ```{r commonTitles}
@@ -415,95 +577,80 @@ assist <- grabTerms(dtm,dtmcols,'assist')
 
 text_data <- cbind(text_data,manage,senior,assist,develop,care,home)
 
-form <- LogSalary ~ analysts + engineers + software + restaurant + worker + college + days + manage + senior + assist + develop + care + home
-model <- hw2.cv(form,text_data)
+form <- LogSalary ~ analysts + engineers + software + restaurant + worker + days + manage + senior + assist + develop + care + home
 
-form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + college + days + manage + senior + assist + develop + care + home
-model <- hw2.cv(form,text_data)
+model <- hw2.cv.lm(form,text_data)
+
+model <- hw2.cv.glmnet(form,text_data,5)
+
+form <- LogSalary ~ RegionReduced + SubRegionReduced + SourceNameReduced + Category + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + days + manage + senior + assist + develop + care + home
 
 
+model <- hw2.cv.lm(form,text_data)
+
+model <- hw2.cv.glmnet(form,text_data,10)
 ```
+
 Fun. Just using the title words, you can get to ~9.6k mae.
-And using the whole beast, it's ~8.1k and that's withour regularization.
+And using the whole beast, it's ~8.2k.
 
-Let's add in regularization, and try a larger set (need to wrap up all the massaging of the dataframe)
-```{r regularizeTitles}
+To wrap up this homework, let's run the regulaized fit on the full
+training set, process the submission set, and apply the model.
+Sadly, the text processing takes too long to run on even the 50k
+training set, so I'll be submitting using a model from the 10k set.
 
-form <- LogSalary ~ RegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + college + days + manage + senior + assist + develop + care + home
+Note: I just had a thought about my reduceFactors() function. The most common factors
+in a test set might not be the same most common factors of the training set. It probably
+better to create a list of the factors to keep from the training set, and then apply
+that list to both the training and test set.
 
-cv.glm.hw2 <- function(form,text_data){
-  library('glmnet')
-  train_mae <- c()
-  test_mae <- c()
-    for (i in 1:max(text_data$fold)) {
-      train <- text_data[text_data$fold != i,]
-      test <- text_data[text_data$fold == i,]
+```{r submission}
+# Load Test Data
+path <- '~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/test.csv'
+submit <- read.csv(path)
+submit$FullDescription <- NA  # reduce memory usage, since we aren't using this field
+submit$SourceNameReduced <- factor(submit$SourceName,levels = levels(data$SourceNameReduced))
+submit$SourceNameReduced[is.na(submit$SourceNameReduced)] <- ' '
+submit$CategoryReduced <- factor(submit$Category,levels = levels(data$CategoryReduced))
+submit$CategoryReduced[is.na(submit$CategoryReduced)] <- ' '
+# Merge on Location
+submit <- merge(submit,location_df,by='LocationNormalized',all.x=T)
+sum(is.na(submit$depth))
+submit$depth[is.na(submit$depth)] = 0
+submit$Region[is.na(submit$Region)] = 'undef'
+submit$SubRegion[is.na(submit$SubRegion)] = 'undef'
 
-      m <- model.frame(form,train)
-      x <- model.matrix(form,data = m)
-      y <- matrix(m$LogSalary)
+submit$RegionReduced <- factor(submit$Region,levels = levels(data$RegionReduced))
+submit$RegionReduced[is.na(submit$RegionReduced)] <- ' '
+submit$RegionReduced[submit$RegionReduced == ' '] <- 'undef'
+submit$SubRegionReduced <- factor(submit$SubRegion,levels = levels(data$SubRegionReduced))
+submit$SubRegionReduced[is.na(submit$SubRegionReduced)] <- ' '
+submit$SubRegionReduced[submit$SubRegionReduced == ' '] <- 'undef'
 
-      model <- cv.glmnet(x,y,type.measure='mae')
+src <- DataframeSource(data.frame(submit$Title))
+c <- Corpus(src)
+dtm <- DocumentTermMatrix(c,control=list(termFreq=list(stopwords = TRUE)))
+dtmcols <- colnames(dtm)
 
-      mtest <- model.frame(form,test)
-      testx <- model.matrix(form,data=mtest)
- 
-      trainPredictions <- exp(predict(model,x,s="lambda.min"))
-      testPredictions <- exp(predict(model,testx,s="lambda.min"))
+analysts <- grabTerms(dtm,dtmcols,'analy')
+engineers <- grabTerms(dtm,dtmcols,'engine')
+software <- grabTerms(dtm,dtmcols,'soft')
+restaurant <- grabTerms(dtm,dtmcols,'restau')
+worker <- grabTerms(dtm,dtmcols,'worker')
+days <- grabTerms(dtm,dtmcols,'day')
+manage <- grabTerms(dtm,dtmcols,'manag')
+senior <- grabTerms(dtm,dtmcols,'senior')
+develop <- grabTerms(dtm,dtmcols,'develop')
+care <- grabTerms(dtm,dtmcols,'care')
+home <- grabTerms(dtm,dtmcols,'home')
+assist <- grabTerms(dtm,dtmcols,'assist')
 
-      train_mae <- c(train_mae,mae(exp(m$LogSalary),trainPredictions))
-      test_mae <- c(test_mae,mae(exp(mtest$LogSalary),testPredictions))
-      }
-  cat('mean train_mae',mean(train_mae),'mean test_mae',mean(test_mae))
-  return(model)
-}
-model <- cv.glm.hw2(form,text_data)
 
-```
+submit <- cbind(submit,manage,senior,assist,develop,care,home,analysts,engineers,software,restaurant,worker,days)
 
-So I'm looking at ~8.2k test mae.
-To wrap up this homework, I'm going to wrap up all the massaging of the data so
-I can run this on a larger dataset, and then the test set to turn in.
+data <- text_data
 
-```{r loadSalary}
-loadSalary <- function(path,loc_frame){
-  library('tm')
-  data <- read.csv(path)
-  data$FullDescription <- NA  # reduce memory usage, since we aren't using this field
-  data$LogSalary <- log(data$SalaryNormalized)
-  data <- reduceFactors(data,'SourceName','SourceNameReduced',20)
-  data <- reduceFactors(data,'Category','CategoryReduced',20)
-  data <- mergelocation(data,loc_frame)
-  data <- reduceFactors(data,'Region','RegionReduced',15)
-  
-  m = nrow(data) # number of rows
-  data$fold <- sample(1:10, m, replace = T)
-  print('test')
-  src <- DataframeSource(data.frame(data$Title))
-  c <- Corpus(src)
-  dtm <- DocumentTermMatrix(c)
-  dtmcols <- colnames(dtm)
-  print('test2')
-  manage <- grabTerms(dtm,dtmcols,'manag')
-  senior <- grabTerms(dtm,dtmcols,'senior')
-  develop <- grabTerms(dtm,dtmcols,'develop')
-  care <- grabTerms(dtm,dtmcols,'care')
-  home <- grabTerms(dtm,dtmcols,'home')
-  assist <- grabTerms(dtm,dtmcols,'assist')
-  analysts <- grabTerms(dtm,dtmcols,'analy')
-  engineers <- grabTerms(dtm,dtmcols,'engine')
-  software <- grabTerms(dtm,dtmcols,'soft')
-  restaurant <- grabTerms(dtm,dtmcols,'restau')
-  worker <- grabTerms(dtm,dtmcols,'worker')
-  college <- grabTerms(dtm,dtmcols,'colle|univers')
-  days <- grabTerms(dtm,dtmcols,'day')  
-  
-  data <- cbind(data,manage,senior,assist,develop,care,home,analysts,engineers,software,restaurant,worker,college,days)
-  
-  return(data)
-}
-path <- '~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/train.csv'
-bigger <- loadSalary(path,loc_frame)
+form <- LogSalary ~ RegionReduced + SubRegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + days + manage + senior + assist + develop + care + home
 
 m <- model.frame(form,data)
 x <- model.matrix(form,data = m)
@@ -511,49 +658,17 @@ y <- matrix(m$LogSalary)
 
 model <- cv.glmnet(x,y,type.measure='mae')
 
-form <- LogSalary ~ SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + college + days + manage + senior + assist + develop + care + home
+form <- ~ RegionReduced + SubRegionReduced + SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + days + manage + senior + assist + develop + care + home
 
-
-path <- '~/Documents/GeneralAssembly/arun/GADS4/data/kaggle_salary/test.csv'
-data <- read.csv(path)
-  data$FullDescription <- NA  # reduce memory usage, since we aren't using this field
-  data <- reduceFactors(data,'SourceName','SourceNameReduced',20)
-  data <- reduceFactors(data,'Category','CategoryReduced',20)
-    
-  m = nrow(data) # number of rows
-  data$fold <- sample(1:10, m, replace = T)
-  print('test')
-  src <- DataframeSource(data.frame(data$Title))
-  c <- Corpus(src)
-  dtm <- DocumentTermMatrix(c)
-  dtmcols <- colnames(dtm)
-  print('test2')
-  manage <- grabTerms(dtm,dtmcols,'manag')
-  senior <- grabTerms(dtm,dtmcols,'senior')
-  develop <- grabTerms(dtm,dtmcols,'develop')
-  care <- grabTerms(dtm,dtmcols,'care')
-  home <- grabTerms(dtm,dtmcols,'home')
-  assist <- grabTerms(dtm,dtmcols,'assist')
-  analysts <- grabTerms(dtm,dtmcols,'analy')
-  engineers <- grabTerms(dtm,dtmcols,'engine')
-  software <- grabTerms(dtm,dtmcols,'soft')
-  restaurant <- grabTerms(dtm,dtmcols,'restau')
-  worker <- grabTerms(dtm,dtmcols,'worker')
-  college <- grabTerms(dtm,dtmcols,'colle|univers')
-  days <- grabTerms(dtm,dtmcols,'day')  
-data <- cbind(data,manage,senior,assist,develop,care,home,analysts,engineers,software,restaurant,worker,college,days)
-
-
-
-form <-  ~SourceNameReduced + CategoryReduced + ContractTime + ContractType + CategoryReduced:ContractTime + CategoryReduced:ContractType + ContractType:ContractTime + analysts + engineers + software + restaurant + worker + college + days + manage + senior + assist + develop + care + home
-mtest <- model.frame(form,data,na.action=na.pass)
-testx <- model.matrix(form,data=mtest)
-testPredictions <- exp(predict(model,testx,s="lambda.min"))
+msubmit <- model.frame(form,submit)
+submitx <- model.matrix(form,data=msubmit)
+submitPredictions <- exp(predict(model,submitx,s="lambda.min"))
 
 submission <- data.frame(Id=data$Id,
-                         Salary=testPredictions)
+                         Salary=submitPredictions)
+colnames(submission) <- c('Id','Salary')
+
 write.csv(submission, "my_submission.csv", row.names=FALSE)
 
 ```
-Blarg. Took out the location pairing because it was removing some of the test rows, and added na.action=na.pass to the model.frame() call because that was removing rows as well. My predictions still have 662 NA's which totally sucks, but at least there is something...
-
+woot.
