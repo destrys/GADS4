@@ -349,11 +349,11 @@ location_df <- read.csv('~/Documents/GeneralAssembly/GADS4/hw2/mergableTable.csv
 colnames(location_df) <- c('LocationNormalized','Region','SubRegion','depth')
 
 data <- merge(data,location_df,by='LocationNormalized',all.x=T)
-# Need to ditch the NAs before using the merged locations. There are only 8.
+# Need to ditch the NAs before using the merged locations,but there are none!
 
-data$depth[is.na(data$depth)] = 0
-data$Region[is.na(data$Region)] = 'undef'
-data$SubRegion[is.na(data$SubRegion)] = 'undef'
+#data$depth[is.na(data$depth)] = 0
+#data$Region[is.na(data$Region)] = 'undef'
+#data$SubRegion[is.na(data$SubRegion)] = 'undef'
 
 ```
 
@@ -488,8 +488,8 @@ hw2.cv.glmnet <- function(form,frame,folds) {
       mtest <- model.frame(form,test)
       testx <- model.matrix(form,data=mtest)
 
-      trainPredictions <- exp(predict(model,x,s="lambda.min"))
-      testPredictions <- exp(predict(model,testx,s="lambda.min"))
+      trainPredictions <- exp(predict(model,x,s=c("lambda.min")))
+      testPredictions <- exp(predict(model,testx,s=c("lambda.min")))
       train_mae <- c(train_mae,mae(exp(train$LogSalary),trainPredictions))
       test_mae <- c(test_mae,mae(exp(test$LogSalary),testPredictions))
       }
@@ -616,9 +616,9 @@ submit$CategoryReduced[is.na(submit$CategoryReduced)] <- ' '
 # Merge on Location
 submit <- merge(submit,location_df,by='LocationNormalized',all.x=T)
 sum(is.na(submit$depth))
-submit$depth[is.na(submit$depth)] = 0
-submit$Region[is.na(submit$Region)] = 'undef'
-submit$SubRegion[is.na(submit$SubRegion)] = 'undef'
+#submit$depth[is.na(submit$depth)] = 0
+#submit$Region[is.na(submit$Region)] = 'undef'
+#submit$SubRegion[is.na(submit$SubRegion)] = 'undef'
 
 submit$RegionReduced <- factor(submit$Region,levels = levels(data$RegionReduced))
 submit$RegionReduced[is.na(submit$RegionReduced)] <- ' '
@@ -664,7 +664,7 @@ msubmit <- model.frame(form,submit)
 submitx <- model.matrix(form,data=msubmit)
 submitPredictions <- exp(predict(model,submitx,s="lambda.min"))
 
-submission <- data.frame(Id=data$Id,
+submission <- data.frame(Id=submit$Id,
                          Salary=submitPredictions)
 colnames(submission) <- c('Id','Salary')
 
