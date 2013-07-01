@@ -11,3 +11,5 @@ This is the fourth time the class has been offered.
 [Arun's Github](https://github.com/arahuja/GADS4)
 
 [Aaron's Blog](http://planspace.org/)
+
+[Aaron's Github](https://github.com/ajschumacher/ds4hw)
